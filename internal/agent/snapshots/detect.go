@@ -1,44 +1,20 @@
 package snapshots
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
-
-	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func detectFilesystem(mountPoint string) (string, error) {
 	switch runtime.GOOS {
 	case "linux":
-		mountsFile, err := os.Open("/proc/mounts")
+		mount, err := FindMount(mountPoint)
 		if err != nil {
-			return "", fmt.Errorf("failed to open /proc/mounts: %w", err)
+			return "", err
 		}
-		defer func() {
-			if err := mountsFile.Close(); err != nil {
-				log.Error(err, "")
-			}
-		}()
-
-		scanner := bufio.NewScanner(mountsFile)
-		for scanner.Scan() {
-			fields := strings.Fields(scanner.Text())
-			if len(fields) >= 3 {
-				mount := fields[1]
-				fsType := fields[2]
-				if mount == mountPoint {
-					return fsType, nil
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return "", fmt.Errorf("failed to read /proc/mounts: %w", err)
-		}
-		return "", fmt.Errorf("mount point %s not found in /proc/mounts", mountPoint)
+		return mount.FSType, nil
 
 	case "darwin":
 		cmd := exec.Command("diskutil", "info", mountPoint)

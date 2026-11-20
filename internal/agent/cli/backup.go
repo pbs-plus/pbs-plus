@@ -285,7 +285,6 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 
 	cmd := exec.Command(execCmd, args...)
 	setProcAttributes(cmd)
-
 	cmd.Env = os.Environ()
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -433,7 +432,12 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 			SourcePath:  "/",
 			Direct:      true,
 		}
-		log.Info("backup: using root snapshot")
+		if sourceMode != "direct" {
+			backupMode = "direct"
+			log.Info("backup: Linux snapshots unavailable; switching to direct mode")
+		} else {
+			log.Info("backup: configured direct mode", "path", "/")
+		}
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
