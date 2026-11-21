@@ -31,11 +31,16 @@ func newRoot(fs *ARPCFS) fs.InodeEmbedder {
 }
 
 func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, error) {
-	root := newRoot(afs)
+	server, err := fs.Mount(mountpoint, newRoot(afs), mountOptions(fsName))
+	if err != nil {
+		return nil, err
+	}
+	return server, nil
+}
 
+func mountOptions(fsName string) *fs.Options {
 	timeout := 2 * time.Second
-
-	options := &fs.Options{
+	return &fs.Options{
 		Debug:              false,
 		FsName:             fsName,
 		Name:               "pbsagent",
@@ -50,12 +55,6 @@ func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, err
 		EntryTimeout: &timeout,
 		AttrTimeout:  &timeout,
 	}
-
-	server, err := fs.Mount(mountpoint, root, options)
-	if err != nil {
-		return nil, err
-	}
-	return server, nil
 }
 
 type Node struct {

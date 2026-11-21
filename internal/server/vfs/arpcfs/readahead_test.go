@@ -173,6 +173,32 @@ func TestSequentialReadsOverlapAgentRoundTrips(t *testing.T) {
 	}
 }
 
+func TestReadaheadToleratesKernelReorder(t *testing.T) {
+	const size = 32 << 20
+	a := &fakeAgent{data: testData(size), latency: 500 * time.Microsecond}
+	fh := newTestHandle(t, a)
+	r := rand.New(rand.NewPCG(3, 3))
+	for off := int64(0); off < size; off += 2 * kernelReadSize {
+		pair := [2]int64{off, off + kernelReadSize}
+		if r.IntN(2) == 0 {
+			pair[0], pair[1] = pair[1], pair[0]
+		}
+		for _, o := range pair {
+			got := readVia(t, fh, o, kernelReadSize)
+			if want := expected(a.data, o, kernelReadSize); got.errno != 0 || !bytes.Equal(got.data, want) {
+				t.Fatalf("read at %d: %d bytes errno %v, want %d bytes", o, len(got.data), got.errno, len(want))
+			}
+		}
+	}
+	if err := fh.Release(t.Context()); err != 0 {
+		t.Fatalf("release: %v", err)
+	}
+	t.Logf("%d agent calls for %d kernel reads", a.calls.Load(), size/kernelReadSize)
+	if c := a.calls.Load(); c > size/kernelReadSize/4 {
+		t.Errorf("agent calls = %d: reordered pairs keep resetting readahead", c)
+	}
+}
+
 func TestReadaheadMatchesDirectReads(t *testing.T) {
 	const block = readaheadBlock
 	sizes := []int{0, 1, kernelReadSize, block - 1, block, block + 1, 3*block + 12345}
