@@ -3,8 +3,9 @@
 package arpcfs
 
 import (
-	"io"
+	"context"
 	"sync"
+	"time"
 )
 
 const (
@@ -13,6 +14,10 @@ const (
 	readaheadStreak = 2
 	readaheadRamp   = 8
 )
+
+// readaheadTimeout bounds each prefetch RPC; arpc enforces context deadlines on
+// the stream, so a stalled agent cannot pin a fetch goroutine past it.
+var readaheadTimeout = 2 * time.Minute
 
 type raBlock struct {
 	buf     []byte
@@ -40,7 +45,6 @@ type readahead struct {
 	streak int
 	end    int64
 	closed bool
-	wg     sync.WaitGroup
 }
 
 func (r *readahead) init(file *ARPCFile) {
@@ -139,13 +143,23 @@ func (r *readahead) start(idx int64) {
 	b := raBlockPool.Get().(*raBlock)
 	b.idx, b.n, b.err, b.refs, b.fetched, b.dropped = idx, 0, nil, 0, false, false
 	r.slots[slot] = b
-	r.wg.Go(func() { r.fetch(b) })
+	go r.fetch(b)
 }
 
 func (r *readahead) fetch(b *raBlock) {
-	n, err := r.file.ReadAt(r.file.fs.Ctx, b.buf, b.idx*readaheadBlock)
-	if err == io.EOF {
-		err = nil
+	var n int
+	err := context.Canceled
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if !closed {
+		fs := r.file.fs
+		ctx, cancel := context.WithTimeout(fs.Ctx, readaheadTimeout)
+		n, err = fs.fetchRemote(ctx, r.file.handleID, b.buf, b.idx*readaheadBlock)
+		cancel()
+		if err == nil {
+			fs.TotalBytes.Add(int64(n))
+		}
 	}
 	r.mu.Lock()
 	b.n, b.err, b.fetched = n, err, true
@@ -185,11 +199,11 @@ func (r *readahead) reset() {
 	r.streak = 0
 }
 
-// close waits for in-flight fetches so the agent handle is not closed under them.
+// close stops new fetches without waiting: the agent finishes reads in flight
+// before it closes the handle, and each fetch recycles its block when it ends.
 func (r *readahead) close() {
 	r.mu.Lock()
 	r.closed = true
 	r.reset()
 	r.mu.Unlock()
-	r.wg.Wait()
 }

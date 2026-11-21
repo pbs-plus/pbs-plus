@@ -153,6 +153,20 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	return n, nil
 }
 
+// fetchRemote reads for readahead: it neither waits for a missing session nor
+// latches session loss, because a failed prefetch only falls back to readRemote.
+func (fs *ARPCFS) fetchRemote(ctx context.Context, handle fswire.FileHandleID, p []byte, off int64) (int, error) {
+	if fs.remoteReadAt != nil {
+		return fs.remoteReadAt(ctx, handle, p, off)
+	}
+	pipe, ok := fs.agentManager.GetStreamPipe(fs.sessionId)
+	if !ok {
+		return 0, ErrSessionLost
+	}
+	req := fswire.ReadAtReq{HandleID: handle, Offset: off, Length: len(p)}
+	return pipe.CallBinary(ctx, "ReadAt", &req, p)
+}
+
 // readRemote reads len(p) bytes at off from an open agent handle. Transport
 // failures are reported as session loss; errors the agent returned are not.
 func (fs *ARPCFS) readRemote(ctx context.Context, handle fswire.FileHandleID, p []byte, off int64) (int, error) {

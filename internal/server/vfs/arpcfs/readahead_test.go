@@ -17,15 +17,18 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
+	"go.uber.org/goleak"
 )
 
 // kernelReadSize is the largest FUSE read seen on production mounts (max_read=131072).
 const kernelReadSize = 128 << 10
 
 type fakeAgent struct {
-	data    []byte
-	latency time.Duration
-	failAt  int64
+	data     []byte
+	latency  time.Duration
+	failAt   int64
+	hangFrom int64
+	unhang   chan struct{}
 
 	calls       atomic.Int64
 	inflight    atomic.Int64
@@ -34,7 +37,7 @@ type fakeAgent struct {
 	afterClose  atomic.Int64
 }
 
-func (a *fakeAgent) readAt(_ context.Context, _ fswire.FileHandleID, p []byte, off int64) (int, error) {
+func (a *fakeAgent) readAt(ctx context.Context, _ fswire.FileHandleID, p []byte, off int64) (int, error) {
 	if a.closed.Load() {
 		a.afterClose.Add(1)
 		return 0, errors.New("read after close")
@@ -42,6 +45,13 @@ func (a *fakeAgent) readAt(_ context.Context, _ fswire.FileHandleID, p []byte, o
 	a.calls.Add(1)
 	cur := a.inflight.Add(1)
 	defer a.inflight.Add(-1)
+	if a.hangFrom > 0 && off >= a.hangFrom {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-a.unhang:
+		}
+	}
 	for {
 		m := a.maxInflight.Load()
 		if cur <= m || a.maxInflight.CompareAndSwap(m, cur) {
@@ -285,11 +295,12 @@ func TestReadaheadKeepsReadErrors(t *testing.T) {
 	}
 }
 
-func TestReleaseWaitsForReadahead(t *testing.T) {
+func TestNoReadaheadAfterRelease(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	const size = 16 << 20
 	a := &fakeAgent{data: testData(size), latency: 3 * time.Millisecond}
 	fh := newTestHandle(t, a)
-	for off := int64(0); off < 4*kernelReadSize; off += kernelReadSize {
+	for off := int64(0); off < 12*kernelReadSize; off += kernelReadSize {
 		readVia(t, fh, off, kernelReadSize)
 	}
 	if err := fh.Release(t.Context()); err != 0 {
@@ -298,12 +309,80 @@ func TestReleaseWaitsForReadahead(t *testing.T) {
 	if !a.closed.Load() {
 		t.Fatal("release did not close the agent handle")
 	}
-	if n := a.inflight.Load(); n != 0 {
-		t.Fatalf("%d agent reads still in flight after release", n)
+	waitFor(t, func() bool { return a.inflight.Load() == 0 }, "agent reads never drained")
+	calls := a.calls.Load()
+	time.Sleep(30 * time.Millisecond)
+	if c := a.calls.Load(); c != calls {
+		t.Fatalf("agent calls grew from %d to %d after release", calls, c)
 	}
-	time.Sleep(20 * time.Millisecond)
-	if n := a.afterClose.Load(); n != 0 {
-		t.Fatalf("%d agent reads issued after the handle was closed", n)
+	if n := a.afterClose.Load(); n > readaheadWindow {
+		t.Fatalf("%d agent reads after close, more than one window", n)
+	}
+}
+
+func TestReleaseDoesNotBlockOnHungAgent(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	old := readaheadTimeout
+	readaheadTimeout = 150 * time.Millisecond
+	defer func() { readaheadTimeout = old }()
+
+	const size = 8 << 20
+	a := &fakeAgent{data: testData(size), hangFrom: readaheadBlock, unhang: make(chan struct{})}
+	defer close(a.unhang)
+	fh := newTestHandle(t, a)
+	for off := int64(0); off < readaheadBlock; off += kernelReadSize {
+		if got := readVia(t, fh, off, kernelReadSize); got.errno != 0 {
+			t.Fatalf("read at %d: %v", off, got.errno)
+		}
+	}
+	waitFor(t, func() bool { return a.inflight.Load() > 0 }, "no prefetch reached the hung range")
+
+	start := time.Now()
+	if err := fh.Release(t.Context()); err != 0 {
+		t.Fatalf("release: %v", err)
+	}
+	if d := time.Since(start); d > 50*time.Millisecond {
+		t.Fatalf("release blocked %v on a hung prefetch", d)
+	}
+	waitFor(t, func() bool { return a.inflight.Load() == 0 }, "hung prefetch outlived its deadline")
+	if fh.fs.sessionDown.Load() {
+		t.Fatal("a timed-out prefetch marked the session lost")
+	}
+}
+
+func TestUnreleasedHandleIsCollectable(t *testing.T) {
+	const size = 4 << 20
+	a := &fakeAgent{data: testData(size)}
+	collected := make(chan struct{})
+	func() {
+		fh := newTestHandle(t, a)
+		runtime.AddCleanup(fh, func(ch chan struct{}) { close(ch) }, collected)
+		readSequential(t, fh, size)
+	}()
+	waitFor(t, func() bool { return a.inflight.Load() == 0 }, "agent reads never drained")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		runtime.GC()
+		select {
+		case <-collected:
+			return
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a file handle with readahead state was never garbage collected")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitFor(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
