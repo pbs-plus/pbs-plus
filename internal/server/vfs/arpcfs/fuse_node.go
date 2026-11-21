@@ -457,10 +457,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		return nil, 0, syscall.EACCES
 	}
 
-	return &FileHandle{
-		fs:   n.fs,
-		file: file,
-	}, 0, 0
+	return newFileHandle(n.fs, file), 0, 0
 }
 
 func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
@@ -484,8 +481,27 @@ func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 type FileHandle struct {
 	fs   *ARPCFS
 	file *ARPCFile
+	ra   readahead
 	cut  atomic.Int64
 	hw   atomic.Int64
+}
+
+func newFileHandle(fs *ARPCFS, file *ARPCFile) *FileHandle {
+	fh := &FileHandle{fs: fs, file: file}
+	if file.zs == nil {
+		fh.ra.init(file)
+	}
+	return fh
+}
+
+func (fh *FileHandle) readFile(ctx context.Context, dest []byte, offset int64) (int, error) {
+	if n, ok := fh.ra.read(dest, offset); ok {
+		if n < len(dest) {
+			return n, io.EOF
+		}
+		return n, nil
+	}
+	return fh.file.ReadAt(ctx, dest, offset)
 }
 
 func (fh *FileHandle) advance(end int64) {
@@ -521,7 +537,7 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 	if c := fh.cut.Load(); c != 0 && offset >= c-1 {
 		return fuse.ReadResultData(nil), 0
 	}
-	n, err := fh.file.ReadAt(ctx, dest, offset)
+	n, err := fh.readFile(ctx, dest, offset)
 	if err != nil && err != io.EOF {
 		if !skippableReadErr(err) {
 			fh.fs.logOnce(fh.file.name, err, "Read")
@@ -548,6 +564,7 @@ func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uin
 }
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
+	fh.ra.close()
 	if err := fh.file.Close(ctx); err != nil {
 		log.Debug("FUSE Release failed", "error", err, "path", fh.file.name, "backup", fh.file.backupID)
 	}

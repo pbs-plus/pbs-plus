@@ -31,20 +31,14 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 		return nil
 	}
 
-	pipe, err := f.fs.getPipe(ctx)
-	if err != nil {
-		return f.fs.sessionLost(err)
-	}
 	log.Debug("issuing Close RPC",
 
 		"handleID", f.handleID, "path", f.name)
 
-	req := fswire.CloseReq{HandleID: f.handleID}
-
-	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancelN()
-
-	_, err = pipe.CallData(ctxN, "Close", &req)
+	err := f.fs.closeRemote(ctx, f.handleID)
+	if errors.Is(err, ErrSessionLost) {
+		return err
+	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Error(err,
 
@@ -60,6 +54,21 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 		"handleID", f.handleID, "path", f.name)
 
 	return nil
+}
+
+// closeRemote closes an agent handle; only transport loss is wrapped as session loss.
+func (fs *ARPCFS) closeRemote(ctx context.Context, handle fswire.FileHandleID) error {
+	if fs.remoteClose != nil {
+		return fs.remoteClose(ctx, handle)
+	}
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
+		return fs.sessionLost(err)
+	}
+	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancelN()
+	_, err = pipe.CallData(ctxN, "Close", &fswire.CloseReq{HandleID: handle})
+	return err
 }
 
 func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
@@ -119,31 +128,17 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 		return 0, syscall.ENOENT
 	}
 
-	pipe, err := f.fs.getPipe(ctx)
-	if err != nil {
-		return 0, f.fs.sessionLost(err)
-	}
 	log.Debug("readAt called",
 
 		"length", len(p), "offset", off, "path", f.name)
 
-	req := fswire.ReadAtReq{
-		HandleID: f.handleID,
-		Offset:   off,
-		Length:   len(p),
-	}
-
-	n, err := pipe.CallBinary(f.fs.Ctx, "ReadAt", &req, p)
+	n, err := f.fs.readRemote(ctx, f.handleID, p, off)
 	if err != nil {
 		log.Error(err,
 			"failed to handle read request",
 
-			"length", len(p), "offset", f.offset, "path", f.name)
-
-		if _, remote := errors.AsType[*arpc.RemoteError](err); remote {
-			return 0, err
-		}
-		return 0, f.fs.sessionLost(err)
+			"length", len(p), "offset", off, "path", f.name)
+		return 0, err
 	}
 
 	f.fs.TotalBytes.Add(int64(n))
@@ -158,6 +153,31 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	return n, nil
 }
 
+// readRemote reads len(p) bytes at off from an open agent handle. Transport
+// failures are reported as session loss; errors the agent returned are not.
+func (fs *ARPCFS) readRemote(ctx context.Context, handle fswire.FileHandleID, p []byte, off int64) (int, error) {
+	if fs.remoteReadAt != nil {
+		return fs.remoteReadAt(ctx, handle, p, off)
+	}
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
+		return 0, fs.sessionLost(err)
+	}
+	req := fswire.ReadAtReq{
+		HandleID: handle,
+		Offset:   off,
+		Length:   len(p),
+	}
+	n, err := pipe.CallBinary(fs.Ctx, "ReadAt", &req, p)
+	if err != nil {
+		if _, remote := errors.AsType[*arpc.RemoteError](err); remote {
+			return 0, err
+		}
+		return 0, fs.sessionLost(err)
+	}
+	return n, nil
+}
+
 func (f *ARPCFile) precheck(ctx context.Context) error {
 	if f.zs == nil {
 		return nil
@@ -168,7 +188,6 @@ func (f *ARPCFile) precheck(ctx context.Context) error {
 type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
-	offset   int64
 	handleID fswire.FileHandleID
 	isClosed atomic.Bool
 	backupID string
