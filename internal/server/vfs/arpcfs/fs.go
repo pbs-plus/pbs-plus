@@ -651,6 +651,8 @@ type ARPCFS struct {
 	skippedCount    atomic.Int64
 	sourceGone      atomic.Bool
 	sourceStat      func(ctx context.Context, root string) error
+	remoteReadAt    func(ctx context.Context, handle fswire.FileHandleID, p []byte, off int64) (int, error)
+	remoteClose     func(ctx context.Context, handle fswire.FileHandleID) error
 
 	expandArchives   bool
 	expandZip        bool
