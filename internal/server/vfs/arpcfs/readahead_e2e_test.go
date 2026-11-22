@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -142,6 +143,20 @@ func TestReadaheadEndToEndLeaksNothing(t *testing.T) {
 	router := arpc.NewRouter()
 	agentFS.RegisterHandlers(&router)
 	s := newE2ESession(t, router)
+	var probing atomic.Bool
+	var rejected atomic.Int64
+	s.fs.remoteReadAt = func(ctx context.Context, h fswire.FileHandleID, p []byte, off int64) (int, error) {
+		pipe, ok := s.fs.agentManager.GetStreamPipe(s.fs.sessionId)
+		if !ok {
+			return 0, ErrSessionLost
+		}
+		n, err := pipe.CallBinary(ctx, "ReadAt", &fswire.ReadAtReq{HandleID: h, Offset: off, Length: len(p)}, p)
+		if err != nil && !probing.Load() {
+			rejected.Add(1)
+			t.Logf("agent rejected ReadAt handle %d off %d: %v", h, off, err)
+		}
+		return n, err
+	}
 
 	cycle := func(i int) {
 		fh := s.open(t, "big.bin")
@@ -168,7 +183,10 @@ func TestReadaheadEndToEndLeaksNothing(t *testing.T) {
 		if err := fh.Release(t.Context()); err != 0 {
 			t.Fatalf("cycle %d release: %v", i, err)
 		}
-		if _, err := s.fs.readRemote(t.Context(), handle, make([]byte, 1), 0); err == nil {
+		probing.Store(true)
+		_, err := s.fs.readRemote(t.Context(), handle, make([]byte, 1), 0)
+		probing.Store(false)
+		if err == nil {
 			t.Fatalf("cycle %d: agent still serves handle %d after release", i, handle)
 		}
 	}
@@ -177,8 +195,11 @@ func TestReadaheadEndToEndLeaksNothing(t *testing.T) {
 		cycle(i)
 	}
 	base := heapInUse()
-	for i := 2; i < 16; i++ {
+	for i := 2; i < 64; i++ {
 		cycle(i)
+	}
+	if n := rejected.Load(); n != 0 {
+		t.Errorf("agent rejected %d prefetch or kernel reads during healthy cycles", n)
 	}
 	waitFor(t, func() bool { return openFDsUnder(t, dir) == 0 }, "agent kept source files open after release")
 	waitFor(t, func() bool { return goroutinesIn("arpcfs.(*readahead).fetch") == 0 }, "prefetch goroutines outlived release while the session is up")
