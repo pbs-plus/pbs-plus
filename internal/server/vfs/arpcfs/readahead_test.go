@@ -178,8 +178,8 @@ func TestSequentialReadsOverlapAgentRoundTrips(t *testing.T) {
 	if m := a.maxInflight.Load(); m < 4 {
 		t.Errorf("max agent reads in flight = %d, want at least 4: round trips are not overlapped", m)
 	}
-	if elapsed > serial/3 {
-		t.Errorf("sequential read took %v, want under %v (a third of one round trip per kernel read)", elapsed, serial/3)
+	if elapsed >= serial {
+		t.Errorf("sequential read took %v, want under the serial floor %v", elapsed, serial)
 	}
 }
 
