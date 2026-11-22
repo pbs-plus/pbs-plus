@@ -296,6 +296,7 @@ func statxTimestamp(ts unix.Timespec) unix.StatxTimestamp {
 	return unix.StatxTimestamp{Sec: sec, Nsec: uint32(nsec)}
 }
 
+// statxDirent bypasses unix.Statx so the pathname remains stack-backed instead of allocating per entry.
 func statxDirent(fd int, name string, sx *unix.Statx_t) error {
 	if len(name) > unix.NAME_MAX {
 		return unix.ENAMETOOLONG
