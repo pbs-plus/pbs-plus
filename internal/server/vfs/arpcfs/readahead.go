@@ -6,6 +6,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -168,9 +170,14 @@ func (r *readahead) fetch(b *raBlock) {
 			r.end = e
 		}
 	}
+	closed = r.closed
 	r.recycle(b)
 	r.cond.Broadcast()
 	r.mu.Unlock()
+	if err != nil && !closed && r.file.fs.Ctx.Err() == nil {
+		log.Warn("readahead fetch failed, reading directly",
+			"error", err, "offset", b.idx*readaheadBlock, "path", r.file.name)
+	}
 }
 
 // drop requires r.mu.
