@@ -41,7 +41,7 @@ require (
 	github.com/spf13/afero v1.15.0
 	github.com/stangelandcl/ppmd v0.1.1
 	github.com/stretchr/testify v1.12.1
-	github.com/ulikunitz/xz v0.5.15
+	github.com/ulikunitz/xz v0.5.16
 	github.com/willscott/go-nfs v0.0.4
 	github.com/willscott/go-nfs-client v0.0.0-20251022144359-801f10d98886
 	github.com/xtaci/smux v1.5.57
