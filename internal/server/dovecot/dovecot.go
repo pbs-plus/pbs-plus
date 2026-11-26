@@ -16,10 +16,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/progress"
 )
 
 const (
@@ -136,6 +138,11 @@ func selectClient(ctx context.Context, dirs, trustedRoots []string) (Client, err
 }
 
 func StageBackup(ctx context.Context, parent string, target coredb.Target, password string, options BackupOptions, client Client) (_ *StagedBackup, err error) {
+	started := time.Now()
+	if options.LogWriter != nil {
+		options.LogWriter = &lockedWriter{writer: options.LogWriter}
+	}
+	logLine(options.LogWriter, "Dovecot staging: preparing mailbox data; PBS snapshot upload has not started")
 	if err := validateTarget(target, password, client); err != nil {
 		return nil, err
 	}
@@ -149,13 +156,17 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 
 	usernames := []string{options.Username}
 	if scope == ScopeServer {
-		if usernames, err = ListUsers(ctx, target, password); err != nil {
+		stop := progress.Watch(ctx, 0, "Dovecot staging: requesting the mailbox user list; PBS upload not started", func(line string) { logLine(options.LogWriter, line) })
+		usernames, err = ListUsers(ctx, target, password)
+		stop()
+		if err != nil {
 			return nil, err
 		}
 		if len(usernames) == 0 {
 			return nil, errors.New("Dovecot target reported no mailbox users")
 		}
 	}
+	logLine(options.LogWriter, fmt.Sprintf("Dovecot staging: %d mailbox users selected; syncing them one at a time before PBS upload", len(usernames)))
 	for _, username := range usernames {
 		if err := validateUsername(username); err != nil {
 			return nil, err
@@ -221,7 +232,8 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 			args = append(args, "-m", options.Mailbox)
 		}
 		args = append(args, "-R", destination(target))
-		if runErr := run(ctx, client.Program, args, username, options.LogWriter); runErr != nil {
+		phase := fmt.Sprintf("Dovecot staging: user %d/%d %q; PBS upload not started", index+1, len(usernames), username)
+		if runErr := run(ctx, client.Program, args, username, options.LogWriter, phase); runErr != nil {
 			if scope == ScopeUser || ctx.Err() != nil {
 				err = fmt.Errorf("pull Dovecot mailbox: %w", runErr)
 				return nil, err
@@ -234,6 +246,7 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 			continue
 		}
 		manifest.Users = append(manifest.Users, ManifestUser{Username: username, Dir: dir})
+		logLine(options.LogWriter, fmt.Sprintf("Dovecot staging: completed user %d/%d %q; %d succeeded, %d failed; elapsed %s; PBS upload not started", index+1, len(usernames), username, len(manifest.Users), len(manifest.Failed), time.Since(started).Round(time.Second)))
 	}
 	if err = os.RemoveAll(secretsDir); err != nil {
 		return nil, fmt.Errorf("remove Dovecot backup secrets: %w", err)
@@ -250,6 +263,7 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 	if err = os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
 		return nil, fmt.Errorf("write Dovecot manifest: %w", err)
 	}
+	logLine(options.LogWriter, fmt.Sprintf("Dovecot staging complete: %d users succeeded, %d failed in %s; preparing the PBS snapshot transfer", len(manifest.Users), len(manifest.Failed), time.Since(started).Round(time.Second)))
 	return &StagedBackup{ArchiveDir: archiveDir, Manifest: manifest, root: root}, nil
 }
 
@@ -382,7 +396,7 @@ func restoreUser(ctx context.Context, archiveDir string, user ManifestUser, targ
 	args = append(args, destination(target))
 	// mailbox GUID state when the destination mailbox already exists. pi:keep
 	for pass := 0; pass < passes; pass++ {
-		if err := run(ctx, client.Program, args, destinationUsername, options.LogWriter); err != nil {
+		if err := run(ctx, client.Program, args, destinationUsername, options.LogWriter, fmt.Sprintf("Dovecot restore: user %q", destinationUsername)); err != nil {
 			return fmt.Errorf("restore Dovecot mailbox: %w", err)
 		}
 	}
@@ -586,15 +600,32 @@ func chownForMail(path string) error {
 	})
 }
 
-func run(ctx context.Context, program string, args []string, username string, logWriter io.Writer) error {
+type lockedWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *lockedWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(data)
+}
+
+func run(ctx context.Context, program string, args []string, username string, logWriter io.Writer, phase string) error {
 	if logWriter == nil {
 		logWriter = io.Discard
 	}
+	writer := &lockedWriter{writer: logWriter}
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Env = userEnv(username)
-	cmd.Stdout = logWriter
-	cmd.Stderr = logWriter
-	return cmd.Run()
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	stop := progress.Watch(ctx, cmd.Process.Pid, phase, func(line string) { logLine(writer, line) })
+	defer stop()
+	return cmd.Wait()
 }
 
 func userEnv(username string) []string {
